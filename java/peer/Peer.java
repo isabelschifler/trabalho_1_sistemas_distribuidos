@@ -13,26 +13,16 @@ import java.util.List;
 import java.util.Scanner;
 
 /**
- * Processo par (peer). O MESMO programa é executado três vezes, cada uma com
- * um nome diferente:
+ * Processo par (peer). O MESMO programa é executado três vezes:
  *
  *   java peer.Peer PeerA
  *   java peer.Peer PeerB
  *   java peer.Peer PeerC
- *
- * Passos executados no main:
- *   1. cria OU obtém o serviço de nomes (só um processo consegue criá-lo);
- *   2. instancia a classe servente (PeerImpl) e a registra com o seu nome;
- *   3. espera os outros dois peers aparecerem no serviço de nomes;
- *   4. faz lookup de cada um e guarda as referências remotas;
- *   5. abre o menu de interação.
  */
 public class Peer {
 
-    /** Porta padrão do rmiregistry. */
     private static final int PORTA_SN = 1099;
 
-    /** Nomes conhecidos de todos os peers (enunciado: cada peer conhece os demais). */
     private static final List<String> TODOS_OS_PEERS = Arrays.asList("PeerA", "PeerB", "PeerC");
 
     public static void main(String[] args) throws Exception {
@@ -52,7 +42,7 @@ public class Peer {
         // 1. Serviço de nomes: só UM processo consegue criá-lo na porta 1099.
         Registry registry = obterOuCriarServicoDeNomes(meuNome);
 
-        // 2. Objeto remoto deste peer, registrado com o seu nome.
+        // 2. Objeto remoto deste peer (o par de chaves é gerado no construtor).
         PeerImpl meuPeer = new PeerImpl(meuNome);
         registry.rebind(meuNome, meuPeer);
         System.out.println("[" + meuNome + "] registrado no serviço de nomes.");
@@ -66,21 +56,13 @@ public class Peer {
             System.out.println("[" + meuNome + "] referência de " + nomeOutro + " obtida.");
         }
 
-        // TODO (T1): gerar o par de chaves (KeyPairGenerator) e enviar a chave
-        // pública para cada um dos outros peers.
+        // 5. Troca de chaves públicas: envia a minha e espera receber as dos outros.
+        meuPeer.distribuirChavePublica();
+        meuPeer.aguardarChaves();
 
         menu(meuPeer, registry);
     }
 
-    /**
-     * Tenta CRIAR o rmiregistry; se a porta já estiver ocupada por um registry
-     * criado por outro peer, createRegistry lança ExportException e então
-     * apenas OBTEMOS a referência do que já existe.
-     *
-     * Observação: o registry vive dentro do processo que o criou. O enunciado
-     * assume que não há falhas, mas se você encerrar esse peer primeiro, o
-     * serviço de nomes some junto com ele.
-     */
     private static Registry obterOuCriarServicoDeNomes(String meuNome) throws RemoteException {
         try {
             Registry r = LocateRegistry.createRegistry(PORTA_SN);
@@ -93,7 +75,6 @@ public class Peer {
         }
     }
 
-    /** Fica consultando o serviço de nomes até o peer indicado se registrar. */
     private static InterfacePeer aguardarPeer(Registry registry, String nomeOutro, String meuNome)
             throws RemoteException, InterruptedException {
         boolean avisou = false;
@@ -110,19 +91,19 @@ public class Peer {
         }
     }
 
-    /**
-     * Menu de interação mínimo.
-     * TODO (T1): acrescente as opções do trabalho (pedir R1/R2, liberar R1/R2,
-     * mostrar estado e filas de cada recurso...).
-     */
     private static void menu(PeerImpl meuPeer, Registry registry) throws Exception {
         Scanner in = new Scanner(System.in, "UTF-8");
         String nome = meuPeer.getNome();
         while (true) {
             System.out.println();
             System.out.println("==== " + nome + " ====");
-            System.out.println("1 - Enviar olá para os outros peers (unicast)");
-            System.out.println("2 - Listar nomes no serviço de nomes (list)");
+            System.out.println("1 - Pedir R1");
+            System.out.println("2 - Pedir R2");
+            System.out.println("3 - Liberar R1");
+            System.out.println("4 - Liberar R2");
+            System.out.println("5 - Mostrar estado e filas");
+            System.out.println("6 - Enviar olá para os outros peers");
+            System.out.println("7 - Listar nomes no serviço de nomes (list)");
             System.out.println("0 - Sair");
             System.out.print("> ");
             if (!in.hasNextLine()) {
@@ -131,9 +112,24 @@ public class Peer {
             String op = in.nextLine().trim();
             switch (op) {
                 case "1":
-                    meuPeer.enviarOlaParaTodos();
+                    meuPeer.pedir("R1");
                     break;
                 case "2":
+                    meuPeer.pedir("R2");
+                    break;
+                case "3":
+                    meuPeer.liberar("R1");
+                    break;
+                case "4":
+                    meuPeer.liberar("R2");
+                    break;
+                case "5":
+                    meuPeer.mostrarEstado();
+                    break;
+                case "6":
+                    meuPeer.enviarOlaParaTodos();
+                    break;
+                case "7":
                     try {
                         System.out.println("Registrados: " + Arrays.toString(registry.list()));
                     } catch (RemoteException e) {

@@ -12,7 +12,6 @@ import java.security.Signature;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +56,10 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
     /** Quem já deu permissão (OK) para o meu pedido atual, por recurso. */
     private final Map<String, Set<String>> permissoes = new HashMap<>();
 
+    
+    // ---- Log das mensagens enviadas/recebidas (acessar sempre com synchronized(log)) ----
+    private final List<String> log = new ArrayList<>();
+
     /** Threads para os envios assíncronos (daemon: não impedem o programa de fechar). */
     private final ExecutorService envios = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r);
@@ -90,7 +93,25 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
     public Map<String, InterfacePeer> getOutrosPeers() {
         return outrosPeers;
     }
-
+        
+    /** Guarda a linha no log (consultável pelo menu) e também a mostra na tela. */
+    private void registrar(String linha) {
+        String completa = "[" + nome + "] " + linha;
+        synchronized (log) {
+            log.add(completa);
+        }
+        System.out.println("\n" + completa);
+    }
+ 
+    /** Mostra todo o log de mensagens enviadas e recebidas. */
+    public void mostrarLog() {
+        synchronized (log) {
+            System.out.println("---- LOG de " + nome + " (" + log.size() + " linhas) ----");
+            for (int i = 0; i < log.size(); i++) {
+                System.out.println((i + 1) + ". " + log.get(i));
+            }
+        }
+    }
     // ------------------------------------------------------------------
     // Chaves e assinaturas
     // ------------------------------------------------------------------
@@ -111,18 +132,18 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         boolean avisou = false;
         while (chavesDosOutros.size() < outrosPeers.size()) {
             if (!avisou) {
-                System.out.println("[" + nome + "] aguardando chaves públicas dos outros peers...");
+                System.out.println("[" + nome + "] aguardando chaves publicas dos outros peers...");
                 avisou = true;
             }
             Thread.sleep(200);
         }
-        System.out.println("[" + nome + "] chaves públicas de todos os peers recebidas.");
+        System.out.println("[" + nome + "] chaves publicas de todos os peers recebidas.");
     }
 
     @Override
     public void receberChavePublica(String remetente, PublicKey chave) throws RemoteException {
         chavesDosOutros.put(remetente, chave);
-        System.out.println("\n[" + nome + "] chave pública de " + remetente + " recebida.");
+        System.out.println("\n[" + nome + "] chave publica de " + remetente + " recebida.");
     }
 
     private byte[] assinar(String conteudo) {
@@ -162,7 +183,7 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
 
     @Override
     public void ola(String remetente) throws RemoteException {
-        System.out.println("\n[" + nome + "] recebeu olá de " + remetente);
+        System.out.println("\n[" + nome + "] recebeu ola de " + remetente);
     }
 
     /** Chegou um PEDIDO de outro peer: responde na hora ou adia (entra na fila). */
@@ -170,18 +191,20 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
     public void solicitarRecurso(String remetente, String recurso, long timestamp, byte[] assinatura)
             throws RemoteException {
         String conteudo = "PEDIDO|" + remetente + "|" + recurso + "|" + timestamp;
+        String descricao = "PEDIDO de " + remetente + " (" + recurso + ", ts=" + timestamp + ")";
         if (!RECURSOS.contains(recurso) || !assinaturaValida(remetente, conteudo, assinatura)) {
-            System.out.println("\n[" + nome + "] PEDIDO inválido (assinatura ou recurso) de " + remetente + " — ignorado.");
-            return;
+            registrar("RECEBIDO " + descricao + " -> assinatura INVALIDA, mensagem DESCARTADA");
+            return; // não mexe em relógio, estado nem fila
         }
+        registrar("RECEBIDO " + descricao + " -> assinatura VALIDA");
 
         boolean adiar;
         synchronized (trava) {
             relogio = Math.max(relogio, timestamp) + 1; // regra de Lamport ao receber
             Estado meu = estado.get(recurso);
-            boolean souMaisAntigo = tsPedido.getOrDefault(recurso, Long.MAX_VALUE) < timestamp
-                    || (tsPedido.getOrDefault(recurso, Long.MAX_VALUE) == timestamp
-                        && nome.compareTo(remetente) < 0); // empate: desempata pelo nome
+            long meuTs = tsPedido.getOrDefault(recurso, Long.MAX_VALUE);
+             boolean souMaisAntigo = meuTs < timestamp
+                    || (meuTs == timestamp && nome.compareTo(remetente) < 0); // empate: desempata pelo nome
             adiar = (meu == Estado.OCUPADO) || (meu == Estado.DESEJADO && souMaisAntigo);
             if (adiar) {
                 fila.get(recurso).add(remetente);
@@ -189,11 +212,9 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         }
 
         if (adiar) {
-            System.out.println("\n[" + nome + "] pedido de " + remetente + " por " + recurso
-                    + " (ts=" + timestamp + ") ADIADO — entrou na fila.");
+            registrar("pedido de " + remetente + " por " + recurso + " ADIADO - entrou na fila de " + recurso);
         } else {
-            System.out.println("\n[" + nome + "] pedido de " + remetente + " por " + recurso
-                    + " (ts=" + timestamp + ") — dando permissão.");
+            registrar("pedido de " + remetente + " por " + recurso + " - dando permissao (OK) imediata");
             enviarNotificacaoAsync(remetente, recurso);
         }
     }
@@ -203,10 +224,12 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
     public void notificar(String remetente, String recurso, long timestamp, byte[] assinatura)
             throws RemoteException {
         String conteudo = "LIBERADO|" + remetente + "|" + recurso + "|" + timestamp;
+        String descricao = "NOTIFICACAO/OK de " + remetente + " (" + recurso + ", ts=" + timestamp + ")";
         if (!RECURSOS.contains(recurso) || !assinaturaValida(remetente, conteudo, assinatura)) {
-            System.out.println("\n[" + nome + "] NOTIFICAÇÃO inválida (assinatura ou recurso) de " + remetente + " — ignorada.");
+            registrar("RECEBIDO " + descricao + " -> assinatura INVALIDA, mensagem DESCARTADA");
             return;
         }
+        registrar("RECEBIDO " + descricao + " -> assinatura VALIDA");
 
         boolean entrou = false;
         synchronized (trava) {
@@ -219,9 +242,9 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
                 }
             }
         }
-        System.out.println("\n[" + nome + "] permissão de " + remetente + " para " + recurso + " recebida.");
+        System.out.println("\n[" + nome + "] permissao de " + remetente + " para " + recurso + " recebida.");
         if (entrou) {
-            System.out.println("[" + nome + "] *** ENTROU na seção crítica de " + recurso + " ***");
+            System.out.println("[" + nome + "] *** ENTROU na secao critica de " + recurso + " ***");
         }
     }
 
@@ -234,8 +257,15 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         long ts;
         synchronized (trava) {
             if (estado.get(recurso) != Estado.LIBERADO) {
-                System.out.println("[" + nome + "] você já pediu ou está usando " + recurso + ".");
+                System.out.println("[" + nome + "] voce ja pediu ou esta usando " + recurso + ".");
                 return;
+            }
+            for (String outro : RECURSOS) {
+                if (!outro.equals(recurso) && estado.get(outro) != Estado.LIBERADO) {
+                    System.out.println("[" + nome + "] politica anti-impasse (um recurso por vez): "
+                            + "libere " + outro + " antes de pedir " + recurso + ".");
+                    return;
+                }
             }
             estado.put(recurso, Estado.DESEJADO);
             permissoes.get(recurso).clear();
@@ -243,7 +273,7 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
             ts = relogio;
             tsPedido.put(recurso, ts);
         }
-        System.out.println("[" + nome + "] pedindo " + recurso + " (ts=" + ts + ")...");
+        registrar("ENVIADO PEDIDO de " + recurso + " (ts=" + ts + ") para " + outrosPeers.keySet());
         byte[] assinatura = assinar("PEDIDO|" + nome + "|" + recurso + "|" + ts);
         for (Map.Entry<String, InterfacePeer> e : outrosPeers.entrySet()) {
             enviarAsync(e.getKey(), () -> e.getValue().solicitarRecurso(nome, recurso, ts, assinatura));
@@ -255,7 +285,7 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         List<String> interessados;
         synchronized (trava) {
             if (estado.get(recurso) != Estado.OCUPADO) {
-                System.out.println("[" + nome + "] você não está usando " + recurso + ".");
+                System.out.println("[" + nome + "] voce nao esta usando " + recurso + ".");
                 return;
             }
             estado.put(recurso, Estado.LIBERADO);
@@ -279,10 +309,24 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         }
         byte[] assinatura = assinar("LIBERADO|" + nome + "|" + recurso + "|" + ts);
         InterfacePeer ref = outrosPeers.get(destino);
+        registrar("ENVIADA NOTIFICACAO/OK de " + recurso + " (ts=" + ts + ") para " + destino);
         enviarAsync(destino, () -> ref.notificar(nome, recurso, ts, assinatura));
     }
 
-    /** Uma chamada remota que pode lançar RemoteException. */
+    /**
+     envia aos outros peers um pedido ADULTERADO. A assinatura é feita
+      sobre ts=1, mas a mensagem vai com ts=999; o destinatário recalcula o texto com
+      999, a verificação falha e ele descarta a mensagem. Não altera o meu estado.
+     */
+    public void enviarPedidoAdulterado() {
+        byte[] assinaturaDoTs1 = assinar("PEDIDO|" + nome + "|R1|1");
+        long tsFalso = 999;
+        registrar("ENVIADO PEDIDO ADULTERADO de R1 (assinado com ts=1, enviado com ts=" + tsFalso + ")");
+        for (Map.Entry<String, InterfacePeer> e : outrosPeers.entrySet()) {
+            enviarAsync(e.getKey(), () -> e.getValue().solicitarRecurso(nome, "R1", tsFalso, assinaturaDoTs1));
+        }
+    }   
+     /** Uma chamada remota que pode lançar RemoteException. */
     private interface ChamadaRemota {
         void executar() throws RemoteException;
     }
@@ -301,11 +345,11 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
     /** Mostra relógio, estado de cada recurso e as filas. */
     public void mostrarEstado() {
         synchronized (trava) {
-            System.out.println("Relógio lógico: " + relogio);
+            System.out.println("Relogio logico: " + relogio);
             for (String r : RECURSOS) {
                 System.out.println(r + ": estado=" + estado.get(r)
                         + (tsPedido.containsKey(r) ? ", ts do pedido=" + tsPedido.get(r) : "")
-                        + ", permissões=" + permissoes.get(r)
+                        + ", permissoes=" + permissoes.get(r)
                         + ", fila de adiados=" + fila.get(r));
             }
         }
@@ -315,7 +359,7 @@ public class PeerImpl extends UnicastRemoteObject implements InterfacePeer {
         for (Map.Entry<String, InterfacePeer> e : outrosPeers.entrySet()) {
             try {
                 e.getValue().ola(nome);
-                System.out.println("[" + nome + "] olá entregue a " + e.getKey());
+                System.out.println("[" + nome + "] ola entregue a " + e.getKey());
             } catch (RemoteException ex) {
                 System.out.println("[" + nome + "] falha ao falar com " + e.getKey() + ": " + ex.getMessage());
             }

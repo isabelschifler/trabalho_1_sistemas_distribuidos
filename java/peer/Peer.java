@@ -45,7 +45,7 @@ public class Peer {
         // 2. Objeto remoto deste peer (o par de chaves é gerado no construtor).
         PeerImpl meuPeer = new PeerImpl(meuNome);
         registry.rebind(meuNome, meuPeer);
-        System.out.println("[" + meuNome + "] registrado no serviço de nomes.");
+        System.out.println("[" + meuNome + "] registrado no servico de nomes.");
 
         // 3 e 4. Espera os demais e guarda as referências remotas.
         List<String> outros = new ArrayList<>(TODOS_OS_PEERS);
@@ -53,7 +53,7 @@ public class Peer {
         for (String nomeOutro : outros) {
             InterfacePeer ref = aguardarPeer(registry, nomeOutro, meuNome);
             meuPeer.adicionarPeer(nomeOutro, ref);
-            System.out.println("[" + meuNome + "] referência de " + nomeOutro + " obtida.");
+            System.out.println("[" + meuNome + "] referencia de " + nomeOutro + " obtida.");
         }
 
         // 5. Troca de chaves públicas: envia a minha e espera receber as dos outros.
@@ -66,11 +66,11 @@ public class Peer {
     private static Registry obterOuCriarServicoDeNomes(String meuNome) throws RemoteException {
         try {
             Registry r = LocateRegistry.createRegistry(PORTA_SN);
-            System.out.println("[" + meuNome + "] serviço de nomes CRIADO na porta " + PORTA_SN + ".");
+            System.out.println("[" + meuNome + "] servico de nomes CRIADO na porta " + PORTA_SN + ".");
             return r;
         } catch (ExportException jaExiste) {
             Registry r = LocateRegistry.getRegistry(PORTA_SN);
-            System.out.println("[" + meuNome + "] serviço de nomes já existia — referência obtida.");
+            System.out.println("[" + meuNome + "] servico de nomes ja existia — referencia obtida.");
             return r;
         }
     }
@@ -101,9 +101,11 @@ public class Peer {
             System.out.println("2 - Pedir R2");
             System.out.println("3 - Liberar R1");
             System.out.println("4 - Liberar R2");
-            System.out.println("5 - Mostrar estado e filas");
-            System.out.println("6 - Enviar olá para os outros peers");
-            System.out.println("7 - Listar nomes no serviço de nomes (list)");
+            System.out.println("5 - Mostrar estado, relogio e filas");
+            System.out.println("6 - Mostrar log de mensagens (com verificacao de assinatura)");
+            System.out.println("7 - Enviar pedido ADULTERADO (demonstra assinatura invalida)");
+            System.out.println("8 - Enviar ola para os outros peers");
+            System.out.println("9 - Listar nomes no servico de nomes (list)");
             System.out.println("0 - Sair");
             System.out.print("> ");
             if (!in.hasNextLine()) {
@@ -127,13 +129,19 @@ public class Peer {
                     meuPeer.mostrarEstado();
                     break;
                 case "6":
-                    meuPeer.enviarOlaParaTodos();
+                    meuPeer.mostrarLog();
                     break;
                 case "7":
+                    meuPeer.enviarPedidoAdulterado();
+                    break;
+                case "8":
+                    meuPeer.enviarOlaParaTodos();
+                    break;
+                case "9":
                     try {
                         System.out.println("Registrados: " + Arrays.toString(registry.list()));
                     } catch (RemoteException e) {
-                        System.out.println("Serviço de nomes indisponível: " + e.getMessage());
+                        System.out.println("Servico de nomes indisponivel: " + e.getMessage());
                     }
                     break;
                 case "0":
@@ -147,7 +155,7 @@ public class Peer {
                     System.exit(0);
                     break;
                 default:
-                    System.out.println("Opção inválida.");
+                    System.out.println("Opcao invalida.");
             }
         }
     }

@@ -7,6 +7,7 @@ import java.security.PublicKey;
 /**
  * Interface remota ÚNICA de um processo par (peer).
  * Todo peer expõe estes métodos e chama os métodos dos outros.
+ * o que um peer aceita receber
  */
 public interface InterfacePeer extends Remote {
 
